@@ -157,6 +157,26 @@
                     </GroupBox>
 
                     <Button Content="Рассчитать" FontWeight="Bold" Padding="0,6" Click="Compute_Click"/>
+
+                    <GroupBox Header="Движения артикулятора" Margin="0,8,0,0">
+                        <StackPanel>
+                            <ComboBox x:Name="MovementBox" SelectionChanged="Movement_Changed">
+                                <ComboBoxItem Tag="Protrusion" Content="Протрузия"/>
+                                <ComboBoxItem Tag="LaterotrusionRight" Content="Латеротрузия вправо"/>
+                                <ComboBoxItem Tag="LaterotrusionLeft" Content="Латеротрузия влево"/>
+                                <ComboBoxItem Tag="Retrusion" Content="Ретрузия (в пределах long centric)"/>
+                            </ComboBox>
+                            <DockPanel Margin="0,4,0,0">
+                                <TextBlock x:Name="AmountText" DockPanel.Dock="Right" Width="60" TextAlignment="Right" Text="0 мм"/>
+                                <Slider x:Name="AmountSlider" Minimum="0" Maximum="6" TickFrequency="0.25" IsSnapToTickEnabled="True"
+                                        ValueChanged="Amount_Changed"/>
+                            </DockPanel>
+                            <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap"
+                                       Text="Путь мыщелка (балансирующего при латеротрузии), мм. Ретрузия — сдвиг кзади."/>
+                            <Button Content="Проверить контакты" Margin="0,6,0,0" Padding="0,4" Click="CheckContacts_Click"/>
+                            <CheckBox x:Name="ShowContacts" Content="Показывать контакты текущего шага" IsChecked="True" Margin="0,4,0,0" Click="Layer_Click"/>
+                        </StackPanel>
+                    </GroupBox>
                 </StackPanel>
             </ScrollViewer>
 

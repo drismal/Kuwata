@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private Landmark? _picking;
     private readonly List<Visual3D> _scene = new();
     private readonly HashSet<Visual3D> _pickable = new();
+    private ContactReport? _contacts;
 
     private static readonly Color UpperColor = Color.FromRgb(0xE8, 0xDF, 0xCF);
     private static readonly Color LowerColor = Color.FromRgb(0xD9, 0xC8, 0xB0);
@@ -34,10 +35,12 @@ public partial class MainWindow : Window
     private static readonly Color BroadrickColor = Color.FromRgb(0xBB, 0xBB, 0xBB);
     private static readonly Color LandmarkColor = Color.FromRgb(0xFF, 0xE0, 0x4A);
     private static readonly Color ConstructionColor = Color.FromRgb(0x7F, 0xD7, 0xFF);
+    private static readonly Color ContactColor = Color.FromRgb(0xFF, 0x3B, 0x30);
 
     public MainWindow()
     {
         InitializeComponent();
+        MovementBox.SelectedIndex = 0;
         ProjectToUi();
         Recalculate(showErrors: false);
     }
@@ -188,6 +191,7 @@ public partial class MainWindow : Window
             return;
         }
         _result = CaseCalculator.Compute(_project);
+        _contacts = null;
         ReportBox.Text = Report.Build(_project, _result);
         StatusText.Text = _result.Errors.Count == 0 ? "Рассчитано" : $"Рассчитано частично: {_result.Errors.Count} этап(а) не выполнено — см. отчёт";
         RebuildScene();
@@ -218,7 +222,14 @@ public partial class MainWindow : Window
                 Add(SceneBuilder.MeshVisual(m.Transformed(D), c, opacity), pickable: true);
         }
 
-        AddMesh(MeshRole.Lower, LowerColor, 1.0, ShowLower);
+        var motion = CurrentMotion();
+        if (ShowLower.IsChecked == true && _project.Meshes.TryGetValue(MeshRole.Lower, out var lower))
+        {
+            var lm = lower.Transformed(D);
+            if (motion is not null) lm = lm.Transformed(motion);
+            // В движении нижняя не участвует в указании ориентиров.
+            Add(SceneBuilder.MeshVisual(lm, LowerColor), pickable: motion is null);
+        }
         AddMesh(MeshRole.Upper, UpperColor, 0.55, ShowUpper);
         AddMesh(MeshRole.CondyleRight, CondyleColor, 0.8, ShowCondyles);
         AddMesh(MeshRole.CondyleLeft, CondyleColor, 0.8, ShowCondyles);
@@ -251,6 +262,17 @@ public partial class MainWindow : Window
                     Add(SceneBuilder.Label(q, l.ToString(), LandmarkColor));
                 }
 
+        if (ShowContacts.IsChecked == true && _contacts is not null && motion is not null)
+        {
+            var step = _contacts.Steps
+                .Where(x => x.Movement == SelectedMovement)
+                .OrderBy(x => Math.Abs(x.Amount - AmountSlider.Value))
+                .FirstOrDefault();
+            if (step is not null && Math.Abs(step.Amount - AmountSlider.Value) < 0.26)
+                foreach (var cp in step.ContactPoints.Where((_, i) => i % 4 == 0))
+                    Add(SceneBuilder.Marker(cp, ContactColor, 0.25));
+        }
+
         if (_result?.Scheme is { } s)
         {
             if (ShowSurface.IsChecked == true)
@@ -267,6 +289,63 @@ public partial class MainWindow : Window
                     Add(SceneBuilder.Marker(np.Point, ConstructionColor, 1.0));
                     Add(SceneBuilder.Label(np.Point, np.Name, ConstructionColor));
                 }
+        }
+    }
+
+    // ───────────── Движения ─────────────
+
+    private Movement SelectedMovement => Enum.Parse<Movement>(SelectedTag(MovementBox));
+
+    /// <summary>Положение нижней челюсти для текущего движения; null — центральная окклюзия.</summary>
+    private RigidTransform? CurrentMotion()
+    {
+        if (_result?.Kinematics is not { } kin || AmountSlider.Value <= 0 || MovementBox.SelectedItem is null) return null;
+        try { return kin.Pose(SelectedMovement, AmountSlider.Value); }
+        catch (InvalidOperationException ex)
+        {
+            StatusText.Text = ex.Message;
+            return null;
+        }
+    }
+
+    private void Movement_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (AmountSlider is null) return;
+        AmountSlider.Maximum = MovementBox.SelectedItem is not null && SelectedMovement == Movement.Retrusion
+            ? Math.Max(0.05, _project.LongCentricMm) : 6;
+        RebuildScene();
+    }
+
+    private void Amount_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (AmountText is null) return;
+        AmountText.Text = $"{AmountSlider.Value:0.##} мм";
+        if (IsLoaded) RebuildScene();
+    }
+
+    private async void CheckContacts_Click(object sender, RoutedEventArgs e)
+    {
+        if (_result is null) return;
+        var project = _project;
+        var result = _result;
+        StatusText.Text = "Проверка контактов…";
+        IsEnabled = false;
+        try
+        {
+            var rep = await Task.Run(() => CaseCalculator.RunContactCheck(project, result));
+            _contacts = rep;
+            ReportBox.Text = Report.Contacts(rep) + Environment.NewLine + Report.Build(project, result);
+            StatusText.Text = rep.Verdicts.All(v => v.Ok) ? "Контакты: замечаний нет" : "Контакты: есть замечания — см. отчёт";
+            RebuildScene();
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(ex.Message, "Проверка контактов", MessageBoxButton.OK, MessageBoxImage.Warning);
+            StatusText.Text = "Проверка не выполнена";
+        }
+        finally
+        {
+            IsEnabled = true;
         }
     }
 
@@ -414,5 +493,6 @@ public partial class MainWindow : Window
         var dlg = new SaveFileDialog { Filter = "Текст (*.txt)|*.txt", FileName = "kuwata_report.txt" };
         if (dlg.ShowDialog(this) != true) return;
         File.WriteAllText(dlg.FileName, ReportBox.Text);
+        StatusText.Text = $"Экспортировано: {dlg.FileName}";
     }
 }

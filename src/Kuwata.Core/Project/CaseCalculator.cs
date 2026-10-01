@@ -17,6 +17,9 @@ public sealed record ArtexSettings(
     double RetrusionLongCentricMm,
     bool RangesVerified);
 
+/// <summary>Наклон траектории точки в кинематике против значения по формуле Куваты, °.</summary>
+public sealed record PathComparison(string Point, string Movement, string Formula, double FormulaValue, double KinematicValue);
+
 public sealed class CaseResult
 {
     public RigidTransform? ScanToArticulator { get; set; }
@@ -31,6 +34,11 @@ public sealed class CaseResult
     public OcclusalScheme? Scheme { get; set; }
     public IReadOnlyList<ToothSize> Teeth { get; set; } = [];
     public ArtexSettings? Artex { get; set; }
+    /// <summary>Режущий край нижнего центрального резца в системе артикулятора (резцовая точка кинематики).</summary>
+    public Vec3? LowerIncisorTipArt { get; set; }
+    public ArticulatorKinematics? Kinematics { get; set; }
+    /// <summary>Динамические наклоны траекторий бугров первых моляров (сравнение с формулами Куваты).</summary>
+    public IReadOnlyList<PathComparison> PathComparisons { get; set; } = [];
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 }
@@ -70,6 +78,9 @@ public static class CaseCalculator
 
         if (T is not null)
             Try(r, "Кривая Шпее / Уилсона", () => r.Scheme = BuildScheme(p, T, artex));
+
+        if (r.Angles is { } ang && T is not null)
+            Try(r, "Кинематика", () => BuildKinematics(p, r, ang, T, artex));
 
         if (r.Angles is { } k)
         {
@@ -154,12 +165,14 @@ public static class CaseCalculator
             if (u is { } uu && l is { } ll)
             {
                 measured = Overlap.FromIncisorTips(T.Apply(uu), T.Apply(ll));
+                r.LowerIncisorTipArt = T.Apply(ll);
                 src = ValueSource.Landmarks;
             }
             else if (p.Meshes.TryGetValue(MeshRole.Upper, out var up) && p.Meshes.TryGetValue(MeshRole.Lower, out var lo))
             {
                 var (ut, lt) = Overlap.DetectIncisorTips(up.Transformed(T), lo.Transformed(T));
                 measured = Overlap.FromIncisorTips(ut, lt);
+                r.LowerIncisorTipArt = lt;
                 src = ValueSource.AutoFromScans;
             }
         }
@@ -189,6 +202,56 @@ public static class CaseCalculator
         var l = p.GetLandmark(lower);
         if (u is null || l is null) return new(null, ValueSource.Missing);
         return new(Overlap.GuidanceAngle(Overlap.FromCanineTips(T.Apply(u.Value), T.Apply(l.Value))), ValueSource.Landmarks);
+    }
+
+    private static void BuildKinematics(KuwataProject p, CaseResult r, KuwataResult k, RigidTransform T, ArtexCrConfig artex)
+    {
+        var inc = r.LowerIncisorTipArt
+            ?? (p.GetLandmark(Landmark.LowerIncisalPoint) is { } lip ? T.Apply(lip) : (Vec3?)null)
+            ?? throw new InvalidOperationException("нет резцовой точки — укажите режущий край нижнего резца или загрузите сканы.");
+        var kin = new ArticulatorKinematics(new KinematicsParameters
+        {
+            SagittalPathRight = p.Joint.SagittalPathRight,
+            SagittalPathLeft = p.Joint.SagittalPathLeft,
+            BennettRight = k.BennettRight,
+            BennettLeft = k.BennettLeft,
+            Guidance = k.Guidance,
+            IncisalPoint = inc,
+            LongCentricMm = p.LongCentricMm,
+        }, artex);
+        r.Kinematics = kin;
+
+        var list = new List<PathComparison>();
+        foreach (var (lm, side, s) in new[] { (Landmark.LowerFirstMolarRight, "6 справа", k.Right), (Landmark.LowerFirstMolarLeft, "6 слева", k.Left) })
+        {
+            if (p.GetLandmark(lm) is not { } w) continue;
+            var pt = T.Apply(w);
+            bool right = lm == Landmark.LowerFirstMolarRight;
+            list.Add(new(side, "протрузия", right ? "P3 справа" : "P3 слева", s.ProtrusiveSlope, kin.PathAngle(Movement.Protrusion, pt)));
+            list.Add(new(side, "рабочая сторона", right ? "WP1" : "WP2", s.WorkingSlope,
+                kin.PathAngle(right ? Movement.LaterotrusionRight : Movement.LaterotrusionLeft, pt)));
+            list.Add(new(side, "балансирующая сторона", right ? "BP1" : "BP2", s.BalancingSlope,
+                kin.PathAngle(right ? Movement.LaterotrusionLeft : Movement.LaterotrusionRight, pt)));
+        }
+        r.PathComparisons = list;
+    }
+
+    /// <summary>
+    /// Проверка контактов на текущих сканах (или на загруженной восковой модели / дизайне
+    /// вместо нижней челюсти). Тяжёлая операция — запускается по запросу.
+    /// </summary>
+    public static ContactReport RunContactCheck(KuwataProject p, CaseResult r, ContactSettings? settings = null)
+    {
+        var T = r.ScanToArticulator ?? throw new InvalidOperationException("Нет переноса в систему артикулятора.");
+        var kin = r.Kinematics ?? throw new InvalidOperationException("Кинематика не рассчитана — см. отчёт.");
+        if (!p.Meshes.TryGetValue(MeshRole.Upper, out var up) || !p.Meshes.TryGetValue(MeshRole.Lower, out var lo))
+            throw new InvalidOperationException("Нужны обе челюсти.");
+        double lower6 = r.Teeth.FirstOrDefault(t => !t.Upper && t.Tooth == 6)?.MesioDistal ?? 11.0;
+        var zones = ArchZones.FromLandmarks(
+            T.Apply(Need(p, Landmark.AspRight)), T.Apply(Need(p, Landmark.AspLeft)),
+            T.Apply(Need(p, Landmark.LowerFirstMolarRight)), T.Apply(Need(p, Landmark.LowerFirstMolarLeft)),
+            lower6);
+        return ContactCheck.Run(up.Transformed(T), lo.Transformed(T), kin, zones, p.LongCentricMm, settings);
     }
 
     private static OcclusalScheme BuildScheme(KuwataProject p, RigidTransform T, ArtexCrConfig artex)

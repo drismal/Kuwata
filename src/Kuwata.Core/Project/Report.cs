@@ -7,6 +7,31 @@ namespace Kuwata.Core.Project;
 /// <summary>Текстовый отчёт по случаю.</summary>
 public static class Report
 {
+    public static string Contacts(ContactReport c)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("ПРОВЕРКА КОНТАКТОВ (нижняя челюсть в движении, верхняя неподвижна)");
+        foreach (var v in c.Verdicts) sb.AppendLine($"  {(v.Ok ? "✓" : "✗")} {v.Text}");
+        sb.AppendLine();
+        sb.AppendLine("  движение              шаг,мм   контакты: фронт R/L | жев. R/L | 7 R/L   интерф. жев.");
+        foreach (var s in c.Steps)
+        {
+            int C(ToothRegion t) => s.Regions[t].Contacts;
+            int interf = s.Regions.Where(kv => kv.Key is not (ToothRegion.AnteriorRight or ToothRegion.AnteriorLeft)).Sum(kv => kv.Value.Interferences);
+            sb.AppendLine($"  {MovementName(s.Movement),-21} {s.Amount,5:0.0#}   {C(ToothRegion.AnteriorRight),5}/{C(ToothRegion.AnteriorLeft),-5} | " +
+                          $"{C(ToothRegion.PosteriorRight),4}/{C(ToothRegion.PosteriorLeft),-4} | {C(ToothRegion.SecondMolarRight),3}/{C(ToothRegion.SecondMolarLeft),-3}  {interf,6}");
+        }
+        return sb.ToString();
+    }
+
+    public static string MovementName(Movement m) => m switch
+    {
+        Movement.Protrusion => "Протрузия",
+        Movement.LaterotrusionRight => "Латеротрузия вправо",
+        Movement.LaterotrusionLeft => "Латеротрузия влево",
+        _ => "Ретрузия",
+    };
+
     public static string Build(KuwataProject p, CaseResult r)
     {
         var ci = CultureInfo.GetCultureInfo("ru-RU");
@@ -60,6 +85,15 @@ public static class Report
             foreach (var b in new[] { sc.Right, sc.Left })
                 L($"  {(b.Side == Articulator.Side.Right ? "Справа" : "Слева")}: OPSC (Y {F(b.Opsc.Y, "")}; Z {F(b.Opsc.Z, "")}) мм");
             L($"  Кривая Уилсона: R = {F(sc.Wilson.Radius, " мм")}, центр (X {F(sc.Wilson.CenterX, "")}; Z {F(sc.Wilson.CenterZ, "")}) в плоскости Y = {F(sc.Wilson.PlaneY, "")}");
+            L();
+        }
+        if (r.PathComparisons.Count > 0)
+        {
+            L("ДИНАМИКА: наклон траектории бугра первого моляра (кинематика артикулятора, путь мыщелка 1 мм)");
+            L("  Кувата: числа по формулам ориентировочные, угол раскрытия проверяется движением (т.1 с.201).");
+            L("     точка      движение               формула      по формуле   кинематика");
+            foreach (var c in r.PathComparisons)
+                L($"     {c.Point,-9}  {c.Movement,-21}  {c.Formula,-10}  {F(c.FormulaValue),10}   {F(c.KinematicValue),10}");
             L();
         }
         if (r.Teeth.Count > 0)
