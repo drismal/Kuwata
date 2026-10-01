@@ -86,7 +86,7 @@ public partial class MainWindow : Window
     {
         var p = _project;
         p.CaseName = CaseNameBox.Text.Trim();
-        p.Registration = Enum.Parse<RegistrationMode>(Tag(RegistrationBox));
+        p.Registration = Enum.Parse<RegistrationMode>(SelectedTag(RegistrationBox));
         if (p.Registration == RegistrationMode.FacebowMatrix)
         {
             var nums = MatrixBox.Text.Split(new[] { ' ', '\t', '\r', '\n', ';' }, StringSplitOptions.RemoveEmptyEntries)
@@ -112,10 +112,10 @@ public partial class MainWindow : Window
 
         p.IncisorWidth = Num(IncWBox.Text, "ширина резца");
         p.IncisorLength = Num(IncLBox.Text, "длина резца");
-        p.Proportions = Enum.Parse<ProportionSystem>(Tag(PropBox));
+        p.Proportions = Enum.Parse<ProportionSystem>(SelectedTag(PropBox));
         p.WardRatio = Num(WardBox.Text, "RED Уорда");
 
-        p.Broadrick.PosteriorPoint = Enum.Parse<PosteriorSurveyPoint>(Tag(PosteriorBox));
+        p.Broadrick.PosteriorPoint = Enum.Parse<PosteriorSurveyPoint>(SelectedTag(PosteriorBox));
         p.Broadrick.RadiusMm = Num(RadiusBox.Text, "радиус Бродрика");
         p.Broadrick.OpscShiftMm = Num(ShiftBox.Text, "сдвиг OPSC");
         p.Surface.WilsonRadiusMm = Num(WilsonBox.Text, "радиус Уилсона");
@@ -134,14 +134,14 @@ public partial class MainWindow : Window
     private static void Select(ComboBox box, string tag) =>
         box.SelectedItem = box.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == tag) ?? box.Items[0];
 
-    private static string Tag(ComboBox box) => (string)((ComboBoxItem)box.SelectedItem).Tag;
+    private static string SelectedTag(ComboBox box) => (string)((ComboBoxItem)box.SelectedItem).Tag;
 
     private void Registration_Changed(object sender, SelectionChangedEventArgs e) => UpdatePanels();
 
     private void UpdatePanels()
     {
         if (RegistrationBox.SelectedItem is null) return;
-        var mode = Enum.Parse<RegistrationMode>(Tag(RegistrationBox));
+        var mode = Enum.Parse<RegistrationMode>(SelectedTag(RegistrationBox));
         MatrixPanel.Visibility = mode == RegistrationMode.FacebowMatrix ? Visibility.Visible : Visibility.Collapsed;
         CondyleFromMeshBox.Visibility = mode == RegistrationMode.AxisOrbital ? Visibility.Visible : Visibility.Collapsed;
         AveragePanel.Visibility = mode == RegistrationMode.AverageValues ? Visibility.Visible : Visibility.Collapsed;

@@ -27,7 +27,10 @@ internal static class SceneBuilder
     {
         var brush = new SolidColorBrush(color) { Opacity = opacity };
         brush.Freeze();
-        var mat = MaterialHelper.CreateMaterial(brush, 40);
+        var mat = new MaterialGroup();
+        mat.Children.Add(new DiffuseMaterial(brush));
+        mat.Children.Add(new SpecularMaterial(Brushes.White, 40));
+        mat.Freeze();
         var model = new GeometryModel3D(ToGeometry(m), mat);
         if (twoSided) model.BackMaterial = mat;
         return new ModelVisual3D { Content = model };
