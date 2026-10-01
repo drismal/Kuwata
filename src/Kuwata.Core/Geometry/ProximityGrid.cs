@@ -11,19 +11,26 @@ public sealed class ProximityGrid
     private readonly double _cell;
     private readonly Dictionary<(int, int, int), List<int>> _cells = new();
     private readonly Vec3[] _normals;
+    private readonly Vec3 _min, _max;
+    private readonly Vec3[] _tmin, _tmax;
 
-    public ProximityGrid(Mesh mesh, double cellSize = 1.0)
+    public ProximityGrid(Mesh mesh, double cellSize = 0.5)
     {
         _mesh = mesh;
         _cell = cellSize;
         _normals = new Vec3[mesh.TriangleCount];
+        _tmin = new Vec3[mesh.TriangleCount];
+        _tmax = new Vec3[mesh.TriangleCount];
+        (_min, _max) = mesh.TriangleCount > 0 ? mesh.Bounds() : (Vec3.Zero, Vec3.Zero);
         for (int t = 0; t < mesh.TriangleCount; t++)
         {
             var (a, b, c) = mesh.Triangle(t);
             var n = (b - a).Cross(c - a);
             _normals[t] = n.Length > 1e-15 ? n.Normalized() : Vec3.Zero;
-            var lo = Key(new Vec3(Math.Min(a.X, Math.Min(b.X, c.X)), Math.Min(a.Y, Math.Min(b.Y, c.Y)), Math.Min(a.Z, Math.Min(b.Z, c.Z))));
-            var hi = Key(new Vec3(Math.Max(a.X, Math.Max(b.X, c.X)), Math.Max(a.Y, Math.Max(b.Y, c.Y)), Math.Max(a.Z, Math.Max(b.Z, c.Z))));
+            _tmin[t] = new Vec3(Math.Min(a.X, Math.Min(b.X, c.X)), Math.Min(a.Y, Math.Min(b.Y, c.Y)), Math.Min(a.Z, Math.Min(b.Z, c.Z)));
+            _tmax[t] = new Vec3(Math.Max(a.X, Math.Max(b.X, c.X)), Math.Max(a.Y, Math.Max(b.Y, c.Y)), Math.Max(a.Z, Math.Max(b.Z, c.Z)));
+            var lo = Key(_tmin[t]);
+            var hi = Key(_tmax[t]);
             for (int i = lo.Item1; i <= hi.Item1; i++)
                 for (int j = lo.Item2; j <= hi.Item2; j++)
                     for (int k = lo.Item3; k <= hi.Item3; k++)
@@ -37,30 +44,76 @@ public sealed class ProximityGrid
     private (int, int, int) Key(Vec3 p) =>
         ((int)Math.Floor(p.X / _cell), (int)Math.Floor(p.Y / _cell), (int)Math.Floor(p.Z / _cell));
 
-    /// <summary>Знаковое расстояние до ближайшего треугольника в радиусе maxDist; null — дальше.</summary>
-    public double? SignedDistance(Vec3 p, double maxDist)
+    /// <summary>
+    /// Быстрая грубая проверка: есть ли треугольники в ячейках в пределах maxDist
+    /// (без точных расстояний). Может дать «да» для точки чуть дальше maxDist.
+    /// </summary>
+    public bool HasTrianglesNear(Vec3 p, double maxDist)
     {
+        if (p.X < _min.X - maxDist || p.Y < _min.Y - maxDist || p.Z < _min.Z - maxDist ||
+            p.X > _max.X + maxDist || p.Y > _max.Y + maxDist || p.Z > _max.Z + maxDist)
+            return false;
         var lo = Key(p - new Vec3(maxDist, maxDist, maxDist));
         var hi = Key(p + new Vec3(maxDist, maxDist, maxDist));
-        double best = double.MaxValue;
-        int bestT = -1;
-        Vec3 bestQ = default;
         for (int i = lo.Item1; i <= hi.Item1; i++)
             for (int j = lo.Item2; j <= hi.Item2; j++)
                 for (int k = lo.Item3; k <= hi.Item3; k++)
-                {
-                    if (!_cells.TryGetValue((i, j, k), out var list)) continue;
-                    foreach (int t in list)
+                    if (_cells.ContainsKey((i, j, k))) return true;
+        return false;
+    }
+
+    /// <summary>Знаковое расстояние до ближайшего треугольника в радиусе maxDist; null — дальше.</summary>
+    /// <remarks>
+    /// Обход ячеек кольцами (по чебышёвскому расстоянию) от ячейки точки; поиск останавливается,
+    /// как только найденное расстояние не больше гарантированно просмотренного радиуса.
+    /// </remarks>
+    public double? SignedDistance(Vec3 p, double maxDist)
+    {
+        if (p.X < _min.X - maxDist || p.Y < _min.Y - maxDist || p.Z < _min.Z - maxDist ||
+            p.X > _max.X + maxDist || p.Y > _max.Y + maxDist || p.Z > _max.Z + maxDist)
+            return null;
+        var c0 = Key(p);
+        int rings = (int)Math.Ceiling(maxDist / _cell);
+        // Расстояние от точки до границы её собственной ячейки — уже просмотрено после кольца 0.
+        double g0 = Math.Min(Edge(p.X, c0.Item1), Math.Min(Edge(p.Y, c0.Item2), Edge(p.Z, c0.Item3)));
+        double best = double.MaxValue;
+        int bestT = -1;
+        Vec3 bestQ = default;
+        for (int k = 0; k <= rings; k++)
+        {
+            for (int i = -k; i <= k; i++)
+                for (int j = -k; j <= k; j++)
+                    for (int l = -k; l <= k; l++)
                     {
-                        var (a, b, c) = _mesh.Triangle(t);
-                        var q = ClosestPointOnTriangle(p, a, b, c);
-                        double d = (p - q).Length;
-                        if (d < best) { best = d; bestT = t; bestQ = q; }
+                        if (Math.Max(Math.Abs(i), Math.Max(Math.Abs(j), Math.Abs(l))) != k) continue;
+                        if (!_cells.TryGetValue((c0.Item1 + i, c0.Item2 + j, c0.Item3 + l), out var list)) continue;
+                        foreach (int t in list)
+                        {
+                            // Отсев по габаритам треугольника.
+                            double bx = Math.Max(0, Math.Max(_tmin[t].X - p.X, p.X - _tmax[t].X));
+                            double by = Math.Max(0, Math.Max(_tmin[t].Y - p.Y, p.Y - _tmax[t].Y));
+                            double bz = Math.Max(0, Math.Max(_tmin[t].Z - p.Z, p.Z - _tmax[t].Z));
+                            double bb = bx * bx + by * by + bz * bz;
+                            if (bb >= best * best || bb > maxDist * maxDist) continue;
+                            var (a, b, c) = _mesh.Triangle(t);
+                            var q = ClosestPointOnTriangle(p, a, b, c);
+                            double d = (p - q).Length;
+                            if (d < best) { best = d; bestT = t; bestQ = q; }
+                        }
                     }
-                }
+            // После кольца k гарантированно просмотрен шар радиуса k·cell + g0 вокруг точки.
+            if (bestT >= 0 && best <= k * _cell + g0) break;
+            if (k * _cell + g0 > maxDist) break;
+        }
         if (bestT < 0 || best > maxDist) return null;
         double side = (p - bestQ).Dot(_normals[bestT]);
         return side < 0 ? -best : best;
+    }
+
+    private double Edge(double v, int key)
+    {
+        double lo = key * _cell;
+        return Math.Min(v - lo, lo + _cell - v);
     }
 
     /// <summary>Ближайшая точка треугольника (Ericson, Real-Time Collision Detection, 5.1.5).</summary>

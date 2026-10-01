@@ -173,3 +173,33 @@ public class ContactCheckTests
         Assert.Equal(ToothRegion.SecondMolarRight, Zones.Classify(new Vec3(27, 25, 0)));
     }
 }
+
+public class ProximityPerformanceTests
+{
+    [Fact]
+    public void LargeMesh_ContactCheck_FinishesQuickly()
+    {
+        // ~180 тыс. треугольников верхней и ~90 тыс. вершин нижней — порядок реального скана.
+        int n = 300;
+        var upper = new Mesh();
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+                upper.AddVertex(new Vec3(-30 + 60.0 * i / (n - 1), 20 + 70.0 * j / (n - 1), 0.5 * Math.Sin(i * 0.3) * Math.Cos(j * 0.3)));
+        for (int j = 0; j < n - 1; j++)
+            for (int i = 0; i < n - 1; i++)
+            {
+                int a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+                upper.AddTriangle(a, c, d);
+                upper.AddTriangle(a, d, b);
+            }
+        var lower = new Mesh();
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+                lower.AddVertex(new Vec3(-30 + 60.0 * i / (n - 1), 20 + 70.0 * j / (n - 1), -0.6 - 3.0 * ((i * 7 + j * 13) % 10) / 10.0));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var rep = ContactCheck.Run(upper, lower, KinematicsTests.Kin(), new ArchZones(60, 60, 31.5, 31.5), 0.5);
+        sw.Stop();
+        Assert.NotEmpty(rep.Steps);
+        Assert.True(sw.Elapsed.TotalSeconds < 30, $"Проверка заняла {sw.Elapsed.TotalSeconds:0.0} с");
+    }
+}

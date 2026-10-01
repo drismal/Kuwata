@@ -18,7 +18,11 @@ public sealed class ContactSettings
     /// <summary>Шаги движения (путь мыщелка / сдвиг кзади), мм.</summary>
     public double[] Steps { get; set; } = [0.5, 1, 2, 3, 4, 5];
     /// <summary>Вершины нижней дальше этого от верхней в ЦО в проверку не берутся, мм.</summary>
-    public double CandidateDistanceMm { get; set; } = 4.0;
+    public double CandidateDistanceMm { get; set; } = 2.0;
+    /// <summary>Глубина поиска поверхности на шаге движения (ловит проникновение до этой глубины), мм.</summary>
+    public double SearchReachMm { get; set; } = 0.5;
+    /// <summary>Прореживание вершин нижней: одна вершина на воксель такого размера, мм.</summary>
+    public double SampleVoxelMm { get; set; } = 0.2;
 }
 
 /// <summary>Границы участков зубного ряда в системе артикулятора.</summary>
@@ -71,15 +75,21 @@ public static class ContactCheck
         double longCentricMm, ContactSettings? settings = null)
     {
         settings ??= new ContactSettings();
-        var grid = new ProximityGrid(upperArt, 1.0);
+        var grid = new ProximityGrid(upperArt);
 
-        // Кандидаты — вершины нижней вблизи верхней в ЦО; запоминаем исходное расстояние.
-        var cand = new List<(Vec3 P, double D0, ToothRegion R)>();
+        // Кандидаты — вершины нижней вблизи верхней в ЦО (грубо, по занятым ячейкам);
+        // исходное расстояние в ЦО — точно, если поверхность рядом, иначе «далеко».
+        var seen = new HashSet<(long, long, long)>();
+        var near = new List<Vec3>();
+        double vox = settings.SampleVoxelMm;
         foreach (var v in lowerArt.Vertices)
         {
-            var d = grid.SignedDistance(v, settings.CandidateDistanceMm);
-            if (d is { } dd) cand.Add((v, dd, zones.Classify(v)));
+            if (vox > 0 && !seen.Add(((long)Math.Floor(v.X / vox), (long)Math.Floor(v.Y / vox), (long)Math.Floor(v.Z / vox)))) continue;
+            if (grid.HasTrianglesNear(v, settings.CandidateDistanceMm)) near.Add(v);
         }
+        var d0s = new double[near.Count];
+        Parallel.For(0, near.Count, i => d0s[i] = grid.SignedDistance(near[i], settings.SearchReachMm) ?? double.PositiveInfinity);
+        var cand = near.Select((v, i) => (P: v, D0: d0s[i], R: zones.Classify(v))).ToList();
 
         var steps = new List<StepResult>();
         foreach (var m in Enum.GetValues<Movement>())
@@ -98,12 +108,19 @@ public static class ContactCheck
     {
         var stats = Enum.GetValues<ToothRegion>().ToDictionary(r => r, _ => (c: 0, i: 0, min: double.MaxValue));
         var pts = new List<Vec3>();
-        double reach = s.ContactToleranceMm + 1.0;
-        foreach (var (p0, d0, region) in cand)
+        double reach = Math.Max(s.ContactToleranceMm, s.SearchReachMm);
+        var moved = new Vec3[cand.Count];
+        var dist = new double?[cand.Count];
+        Parallel.For(0, cand.Count, i =>
         {
-            var p = pose.Apply(p0);
-            var d = grid.SignedDistance(p, reach);
-            if (d is not { } dd) continue;
+            moved[i] = pose.Apply(cand[i].P);
+            dist[i] = grid.SignedDistance(moved[i], reach);
+        });
+        for (int i = 0; i < cand.Count; i++)
+        {
+            var (_, d0, region) = cand[i];
+            var p = moved[i];
+            if (dist[i] is not { } dd) continue;
             var st = stats[region];
             if (dd < st.min) st.min = dd;
             if (dd < s.ContactToleranceMm)
