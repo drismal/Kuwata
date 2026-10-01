@@ -1,0 +1,194 @@
+<Window x:Class="Kuwata.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:h="http://helix-toolkit.org/wpf"
+        Title="Kuwata — функциональная окклюзия (Artex CR)" Height="900" Width="1500"
+        WindowState="Maximized">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_Файл">
+                <MenuItem Header="_Новый случай" Click="New_Click"/>
+                <MenuItem Header="_Открыть…" Click="Open_Click"/>
+                <MenuItem Header="_Сохранить" Click="Save_Click"/>
+                <MenuItem Header="Сохранить _как…" Click="SaveAs_Click"/>
+                <Separator/>
+                <MenuItem Header="Выход" Click="Exit_Click"/>
+            </MenuItem>
+            <MenuItem Header="_Импорт">
+                <MenuItem Header="Верхняя челюсть (STL/OBJ)…" Tag="Upper" Click="Import_Click"/>
+                <MenuItem Header="Нижняя челюсть (STL/OBJ)…" Tag="Lower" Click="Import_Click"/>
+                <Separator/>
+                <MenuItem Header="Суставная головка справа (STL из КТ)…" Tag="CondyleRight" Click="Import_Click"/>
+                <MenuItem Header="Суставная головка слева (STL из КТ)…" Tag="CondyleLeft" Click="Import_Click"/>
+            </MenuItem>
+            <MenuItem Header="_Экспорт">
+                <MenuItem Header="Поверхность STL — в координатах исходных сканов (exocad / 3Shape)…" Tag="OriginalScans" Click="ExportStl_Click"/>
+                <MenuItem Header="Поверхность STL — в системе артикулятора…" Tag="Articulator" Click="ExportStl_Click"/>
+                <MenuItem x:Name="IncludeCurvesItem" Header="Добавлять кривые в STL (трубки)" IsCheckable="True" IsChecked="True"/>
+                <Separator/>
+                <MenuItem Header="Параметры (Artex CR, матрица, точки) JSON…" Click="ExportJson_Click"/>
+                <MenuItem Header="Отчёт TXT…" Click="ExportReport_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock x:Name="StatusText" Text="Готово"/>
+        </StatusBar>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="430"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Ввод -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="6">
+                <StackPanel>
+                    <GroupBox Header="Случай">
+                        <StackPanel>
+                            <TextBox x:Name="CaseNameBox" ToolTip="Название случая"/>
+                            <TextBlock x:Name="MeshesInfo" TextWrapping="Wrap" Foreground="Gray" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Перенос в систему артикулятора">
+                        <StackPanel>
+                            <ComboBox x:Name="RegistrationBox" SelectionChanged="Registration_Changed">
+                                <ComboBoxItem Tag="AlreadyInArticulator" Content="Сканы уже в системе артикулятора"/>
+                                <ComboBoxItem Tag="FacebowMatrix" Content="Лицевая дуга: матрица 4×4"/>
+                                <ComboBoxItem Tag="AxisOrbital" Content="По КТ: суставные головки + орбитале"/>
+                                <ComboBoxItem Tag="AverageValues" Content="Средние значения (без КТ)"/>
+                            </ComboBox>
+                            <StackPanel x:Name="MatrixPanel" Margin="0,4,0,0">
+                                <TextBlock Text="Матрица «скан → артикулятор», 16 чисел по строкам:" TextWrapping="Wrap"/>
+                                <TextBox x:Name="MatrixBox" Height="64" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
+                            </StackPanel>
+                            <CheckBox x:Name="CondyleFromMeshBox" Margin="0,4,0,0"
+                                      Content="Центры головок — сферой по STL мыщелков"/>
+                            <Grid x:Name="AveragePanel" Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <TextBlock Text="Сторона Бонвиля, мм"/><TextBox x:Name="BonwillBox" Grid.Column="1"/>
+                                <TextBlock Grid.Row="1" Text="Угол Балквилла, °"/><TextBox x:Name="BalkwillBox" Grid.Row="1" Grid.Column="1"/>
+                                <TextBlock Grid.Row="2" Text="Окклюз. пл. к ось-орбит., °"/><TextBox x:Name="OpTiltBox" Grid.Row="2" Grid.Column="1"/>
+                            </Grid>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Суставные параметры (°)">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                            <TextBlock Grid.Column="1" Text="справа" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="слева" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Text="ССП"/>
+                            <TextBox x:Name="SspRBox" Grid.Row="1" Grid.Column="1"/>
+                            <TextBox x:Name="SspLBox" Grid.Row="1" Grid.Column="2"/>
+                            <TextBlock Grid.Row="2" Text="Угол Беннета"/>
+                            <TextBox x:Name="BenRBox" Grid.Row="2" Grid.Column="1" ToolTip="Пусто — по Ханау: ССП/8 + 12"/>
+                            <TextBox x:Name="BenLBox" Grid.Row="2" Grid.Column="2" ToolTip="Пусто — по Ханау: ССП/8 + 12"/>
+                            <TextBlock Grid.Row="3" Grid.ColumnSpan="3" Foreground="Gray" FontSize="11" TextWrapping="Wrap"
+                                       Text="Беннет пусто — по Ханау (т.1 с.136). Поворот рабочего мыщелка RC = 0."/>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Фронтальная направляющая (пусто — расчёт)">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                            <TextBlock Text="Overbite, мм"/><TextBox x:Name="ObBox" Grid.Column="1"/>
+                            <TextBlock Grid.Row="1" Text="Overjet, мм"/><TextBox x:Name="OjBox" Grid.Row="1" Grid.Column="1"/>
+                            <TextBlock Grid.Row="2" Text="A3 протрузия, °"/><TextBox x:Name="A3Box" Grid.Row="2" Grid.Column="1"/>
+                            <TextBlock Grid.Row="3" Text="A1 клык, движение вправо, °"/><TextBox x:Name="A1Box" Grid.Row="3" Grid.Column="1"/>
+                            <TextBlock Grid.Row="4" Text="A2 клык, движение влево, °"/><TextBox x:Name="A2Box" Grid.Row="4" Grid.Column="1"/>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Центральный резец и пропорции">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                            <TextBlock Text="Ширина, мм"/><TextBox x:Name="IncWBox" Grid.Column="1"/>
+                            <TextBlock Grid.Row="1" Text="Длина, мм"/><TextBox x:Name="IncLBox" Grid.Row="1" Grid.Column="1"/>
+                            <ComboBox x:Name="PropBox" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,2">
+                                <ComboBoxItem Tag="Wheeler" Content="Уилер, масштаб от резца (по умолчанию)"/>
+                                <ComboBoxItem Tag="RickettsGolden" Content="Рикеттс (золотая пропорция)"/>
+                                <ComboBoxItem Tag="WardRed" Content="Уорд (RED)"/>
+                            </ComboBox>
+                            <TextBlock Grid.Row="3" Text="RED Уорда, доля"/><TextBox x:Name="WardBox" Grid.Row="3" Grid.Column="1"/>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Окклюзионная плоскость (Бродрик)">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                            <ComboBox x:Name="PosteriorBox" Grid.ColumnSpan="2" Margin="0,2">
+                                <ComboBoxItem Tag="Mpsp" Content="MPSP — дистощёчный бугор нижнего 7"/>
+                                <ComboBoxItem Tag="Cpsp" Content="CPSP — мыщелковый элемент артикулятора"/>
+                            </ComboBox>
+                            <TextBlock Grid.Row="1" Text="Радиус, мм (4″ = 101.6)"/><TextBox x:Name="RadiusBox" Grid.Row="1" Grid.Column="1"/>
+                            <TextBlock Grid.Row="2" Text="Сдвиг OPSC кзади, мм"/><TextBox x:Name="ShiftBox" Grid.Row="2" Grid.Column="1"/>
+                            <TextBlock Grid.Row="3" Text="Радиус Уилсона, мм"/><TextBox x:Name="WilsonBox" Grid.Row="3" Grid.Column="1"/>
+                            <TextBlock Grid.Row="4" Text="Long centric (ретрузия), мм"/><TextBox x:Name="LcBox" Grid.Row="4" Grid.Column="1"/>
+                        </Grid>
+                    </GroupBox>
+
+                    <GroupBox Header="Ориентиры">
+                        <StackPanel>
+                            <ListBox x:Name="LandmarkList" Height="260" HorizontalContentAlignment="Stretch">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding CoordText}" Foreground="{Binding Brush}" FontSize="11"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="Указать на модели" Padding="8,2" Click="PickLandmark_Click"/>
+                                <Button Content="Очистить" Padding="8,2" Margin="6,0,0,0" Click="ClearLandmark_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <Button Content="Рассчитать" FontWeight="Bold" Padding="0,6" Click="Compute_Click"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch"/>
+
+            <!-- 3D -->
+            <h:HelixViewport3D x:Name="Viewport" Grid.Column="2" ShowCoordinateSystem="True" ShowViewCube="True"
+                               ZoomExtentsWhenLoaded="True" Background="#FF2B2F36"
+                               PreviewMouseLeftButtonDown="Viewport_PreviewMouseLeftButtonDown">
+                <h:DefaultLights/>
+            </h:HelixViewport3D>
+
+            <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch"/>
+
+            <!-- Слои и отчёт -->
+            <DockPanel Grid.Column="4" Margin="6">
+                <GroupBox Header="Слои" DockPanel.Dock="Top">
+                    <WrapPanel x:Name="LayersPanel">
+                        <CheckBox x:Name="ShowUpper" Content="Верхняя" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowLower" Content="Нижняя" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowCondyles" Content="Мыщелки КТ" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowArticulator" Content="Оси и шарнир" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowLandmarks" Content="Ориентиры" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowCurves" Content="Кривые" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowSurface" Content="Поверхность" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowConstruction" Content="Точки построения" IsChecked="True" Margin="0,0,10,2" Click="Layer_Click"/>
+                        <CheckBox x:Name="ShowPlane" Content="Ось-орбит. плоскость" IsChecked="False" Margin="0,0,10,2" Click="Layer_Click"/>
+                    </WrapPanel>
+                </GroupBox>
+                <TextBox x:Name="ReportBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>
